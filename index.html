@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Rishi Music</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0F0F0F" />
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar / Top Bar on mobile -->
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>♫ RISHI MUSIC</h1>
+        <p>Personal Audio Hub </p>
+      </div>
+
+      <label class="btn-import">
+        + Import Track
+        <input type="file" id="audioFileInput" accept="audio/*" multiple />
+      </label>
+
+      <div class="filter-group">
+        <label for="directorFilter">PLAYLIST / ARTIST</label>
+        <select id="directorFilter">
+          <option value="All">All</option>
+        </select>
+      </div>
+    </aside>
+
+    <!-- Main List View -->
+    <main class="main-content">
+      <header class="top-nav">
+        <h2 id="viewTitle">All Songs</h2>
+        <input type="text" id="searchInput" placeholder="🔍 Search song name..." />
+      </header>
+
+      <section class="song-list" id="songListContainer"></section>
+    </main>
+
+    <!-- Persistent Bottom Audio Player -->
+    <footer class="player-bar">
+      <div class="meta-box">
+        <div class="track-title" id="playerTitle">No track playing</div>
+        <div class="track-artist" id="playerArtist">Select a song from your library</div>
+      </div>
+
+      <div class="controls-box">
+        <button id="prevBtn" class="control-btn" aria-label="Previous">⏮</button>
+        <button id="playBtn" class="control-btn primary" aria-label="Play">▶</button>
+        <button id="nextBtn" class="control-btn" aria-label="Next">⏭</button>
+      </div>
+
+      <div class="slider-box">
+        <span id="currentTime">0:00</span>
+        <input type="range" id="progressBar" min="0" max="100" value="0" step="0.1" />
+        <span id="totalTime">0:00</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Updated flags: preload="auto" and playsinline prevent mobile buffering stalls -->
+  <audio id="audioEngine" preload="auto" playsinline></audio>
+  <script src="app.js"></script>
+</body>
+</html>
