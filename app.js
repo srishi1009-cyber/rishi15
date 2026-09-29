@@ -1,33 +1,16 @@
 // ============================================================
-// RISHI MUSIC - BULLETPROOF ENGINE WITH PERMANENT REPO TRACKS
+// RISHI MUSIC - BULLETPROOF APP ENGINE (app.js)
 // ============================================================
 
 const DB_NAME = "RishiMusicDB";
-const DB_VERSION = 3;
+const DB_VERSION = 2;
 const STORES = {
   TRACKS: "tracks",
   PLAYLISTS: "playlists",
   METADATA: "metadata"
 };
 
-// ------------------------------------------------------------
-// ADD YOUR PERMANENT GITHUB SONGS HERE
-// Put MP3 files inside a "songs/" folder in your repository
-// ------------------------------------------------------------
-const DEFAULT_CATALOG = [
-  {
-    title: "Example Song 1",
-    director: "HARRIS JAYARAJ",
-    url: "./songs/track1.mp3"
-  },
-  {
-    title: "Example Song 2",
-    director: "ANIRUDH RAVICHANDER",
-    url: "./songs/track2.mp3"
-  }
-];
-
-// App State
+// --- App State ---
 let db = null;
 let songs = [];
 let currentIndex = -1;
@@ -38,19 +21,19 @@ let favorites = new Set();
 let recentlyPlayed = [];
 let playlists = {};
 let playHistoryStats = {};
-let repeatMode = "off";
+let repeatMode = "off"; // 'off' | 'one' | 'all'
 let isShuffle = false;
 let sleepTimerId = null;
 let sleepTimerRemaining = 0;
 
-// Web Audio & Equalizer Nodes
+// --- Web Audio & Equalizer Nodes ---
 let audioCtx = null;
 let audioSource = null;
 let bassNode = null;
 let trebleNode = null;
 let eqInitialized = false;
 
-// Playback Pipeline Control
+// --- Playback Anti-Stuck & Pipeline State ---
 let playbackGeneration = 0;
 let isTransitioning = false;
 let nextSongTimer = null;
@@ -58,6 +41,7 @@ let activePlayPromise = null;
 let unplayedQueue = [];
 const blobUrlCache = new WeakMap();
 
+// Audio Element Anchor
 const audio = document.getElementById("audioEngine") || new Audio();
 if (!document.getElementById("audioEngine")) {
   audio.id = "audioEngine";
@@ -67,7 +51,7 @@ if (!document.getElementById("audioEngine")) {
 }
 
 // ============================================================
-// 1. PERSISTENT STORAGE & INDEXEDDB
+// 1. STORAGE DURABILITY & INDEXEDDB
 // ============================================================
 
 async function requestPersistentStorage() {
@@ -107,7 +91,7 @@ function openDatabase() {
 
 function saveTrackToDB(track) {
   return new Promise((resolve, reject) => {
-    if (!db) return reject(new Error("Database unavailable"));
+    if (!db) return reject(new Error("Database not ready"));
     const tx = db.transaction(STORES.TRACKS, "readwrite");
     const store = tx.objectStore(STORES.TRACKS);
     const req = store.add(track);
@@ -118,7 +102,7 @@ function saveTrackToDB(track) {
 
 function updateTrackInDB(track) {
   return new Promise((resolve, reject) => {
-    if (!db) return reject(new Error("Database unavailable"));
+    if (!db) return reject(new Error("Database not ready"));
     const tx = db.transaction(STORES.TRACKS, "readwrite");
     const store = tx.objectStore(STORES.TRACKS);
     const req = store.put(track);
@@ -129,7 +113,7 @@ function updateTrackInDB(track) {
 
 function loadAllTracksFromDB() {
   return new Promise((resolve, reject) => {
-    if (!db) return reject(new Error("Database unavailable"));
+    if (!db) return reject(new Error("Database not ready"));
     const tx = db.transaction(STORES.TRACKS, "readonly");
     const store = tx.objectStore(STORES.TRACKS);
     const req = store.getAll();
@@ -186,7 +170,7 @@ function initEqualizer() {
     trebleNode.connect(audioCtx.destination);
     eqInitialized = true;
   } catch (err) {
-    console.debug("Equalizer waiting for interaction:", err);
+    console.debug("Equalizer waiting for interaction gesture:", err);
   }
 }
 
@@ -274,7 +258,7 @@ function formatTime(seconds) {
 }
 
 // ============================================================
-// 4. METADATA HELPERS & DIVERSE QUEUE
+// 4. METADATA HELPERS & NO-REPEAT QUEUE
 // ============================================================
 
 function getSongDirector(song) {
@@ -388,7 +372,7 @@ function updateMediaPositionState() {
 function setupMediaSession() {
   if (!("mediaSession" in navigator)) return;
 
-  // Single Click: Play / Unstick
+  // Single Click (AirPods Stem): Play / Unstick
   navigator.mediaSession.setActionHandler("play", async () => {
     isTransitioning = false;
     if (nextSongTimer) clearTimeout(nextSongTimer);
@@ -402,7 +386,7 @@ function setupMediaSession() {
     }
   });
 
-  // Single Click: Pause
+  // Single Click (AirPods Stem): Pause
   navigator.mediaSession.setActionHandler("pause", () => {
     isTransitioning = false;
     audio.pause();
@@ -410,21 +394,21 @@ function setupMediaSession() {
     setMediaSessionState("paused");
   });
 
-  // Double Click: Skip Next
+  // Double Click (AirPods Stem): Skip Next
   navigator.mediaSession.setActionHandler("nexttrack", () => {
     isTransitioning = false;
     if (nextSongTimer) clearTimeout(nextSongTimer);
     playNextAutomaticSong();
   });
 
-  // Triple Click: Skip Previous
+  // Triple Click (AirPods Stem): Skip Previous
   navigator.mediaSession.setActionHandler("previoustrack", () => {
     isTransitioning = false;
     if (nextSongTimer) clearTimeout(nextSongTimer);
     prevSong();
   });
 
-  // Scrubbing & Seeking
+  // Lockscreen Scrubbing & Timeline Sync
   try {
     navigator.mediaSession.setActionHandler("seekforward", (details) => {
       const skip = details.seekOffset || 10;
@@ -470,19 +454,21 @@ async function playSongAtIndex(index, isAutomatic = false) {
     return false;
   }
 
+  // 1. Wait for active promise to clear before switching source
   if (activePlayPromise) {
     try {
       await activePlayPromise;
     } catch (e) {}
   }
 
-  // Clear previous audio buffer to eliminate stuck audio memory
+  // 2. Clear hardware audio decoder buffer to prevent memory jams
   try {
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
   } catch (e) {}
 
+  // 3. Mount track
   audio.src = source;
   audio.currentTime = 0;
 
@@ -492,6 +478,7 @@ async function playSongAtIndex(index, isAutomatic = false) {
   renderSongList();
   renderMiniPlayer();
 
+  // 4. Safe single-flight play attempt
   try {
     if (!eqInitialized) initEqualizer();
     if (audioCtx && audioCtx.state === "suspended") await audioCtx.resume();
@@ -511,6 +498,7 @@ async function playSongAtIndex(index, isAutomatic = false) {
     console.warn("Unplayable or interrupted track:", err);
     if (currentGeneration === playbackGeneration) {
       updatePlayButton();
+      // Auto-skip corrupted audio files instead of getting stuck
       if (isAutomatic) playNextAutomaticSong();
     }
     return false;
@@ -543,6 +531,7 @@ async function playNextAutomaticSong() {
       if (success) return;
     }
 
+    // Direct sequential fallback
     const sequentialIndex = (currentIndex + 1) % songs.length;
     await playSongAtIndex(sequentialIndex, true);
   } catch (err) {
@@ -607,7 +596,7 @@ function toggleRepeat() {
 }
 
 // ============================================================
-// 7. USER METRICS & FAVORITES
+// 7. USER ENGAGEMENT, PLAYLISTS & METRICS
 // ============================================================
 
 function recordSongPlay(song) {
@@ -646,7 +635,7 @@ function createPlaylist(name) {
 }
 
 // ============================================================
-// 8. AUDIO EVENT LISTENERS
+// 8. AUDIO ENGINE EVENTS
 // ============================================================
 
 audio.addEventListener("play", () => {
@@ -697,7 +686,7 @@ if (progressBar) {
 }
 
 // ============================================================
-// 9. UI RENDERING & DASHBOARD
+// 9. UI RENDERING & DASHBOARDS
 // ============================================================
 
 function updatePlayButton() {
@@ -936,7 +925,7 @@ function updateTrackCountUI() {
 }
 
 // ============================================================
-// 10. INITIALIZATION & BUNDLED SONGS SYNC
+// 10. BOOTLOADER & USER EVENTS
 // ============================================================
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -944,31 +933,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     await requestPersistentStorage();
     await openDatabase();
 
-    // Load saved database songs
-    const storedSongs = await loadAllTracksFromDB();
-
-    // Auto-sync default bundled GitHub songs if not already in database
-    for (const defSong of DEFAULT_CATALOG) {
-      const exists = storedSongs.some(s => s.title === defSong.title && s.director === defSong.director);
-      if (!exists) {
-        const id = await saveTrackToDB({
-          title: defSong.title,
-          director: defSong.director.toUpperCase(),
-          artist: defSong.director.toUpperCase(),
-          url: defSong.url,
-          createdAt: Date.now()
-        });
-        storedSongs.push({
-          id,
-          title: defSong.title,
-          director: defSong.director.toUpperCase(),
-          artist: defSong.director.toUpperCase(),
-          url: defSong.url
-        });
-      }
-    }
-
-    songs = storedSongs;
+    songs = await loadAllTracksFromDB();
     songs.sort((a, b) => (a.id || 0) - (b.id || 0));
 
     const savedFavs = await getPersistentMeta("favorites");
@@ -996,7 +961,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     console.error("Bootloader failed to initialize:", err);
   }
 
-  // File Upload (Manual addition)
+  // Audio Import
   const audioFileInput = document.getElementById("audioFileInput");
   if (audioFileInput) {
     audioFileInput.addEventListener("change", async (event) => {
@@ -1033,7 +998,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Search Filter
+  // Search
   const searchInput = document.getElementById("searchInput");
   if (searchInput) {
     searchInput.addEventListener("input", () => {
@@ -1050,7 +1015,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Control Buttons
+  // Hardware/Onscreen Buttons
   document.getElementById("playBtn")?.addEventListener("click", togglePlay);
   document.getElementById("miniPlayBtn")?.addEventListener("click", togglePlay);
   document.getElementById("nextBtn")?.addEventListener("click", nextSong);
@@ -1091,7 +1056,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // Playback Speed Controls
+  // Speed Toggles
   const speedButtons = document.querySelectorAll(".btn-speed");
   speedButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1108,12 +1073,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("timer60")?.addEventListener("click", () => setSleepTimer(60));
   document.getElementById("timerOff")?.addEventListener("click", () => setSleepTimer(0));
 
-  // EQ Preset
+  // EQ Selector
   document.getElementById("eqPresetSelector")?.addEventListener("change", (e) => {
     applyEqualizerPreset(e.target.value);
   });
 
-  // Playlists
+  // New Playlist
   document.getElementById("newPlaylistBtn")?.addEventListener("click", () => {
     const name = prompt("Enter new playlist name:");
     if (name && name.trim()) {
@@ -1122,14 +1087,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 });
 
-// Offline Support
+// Cache via Service Worker
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   });
 }
 
-// Background Cleanup
+// Memory Cleanup on Window Exit
 window.addEventListener("beforeunload", () => {
   if (nextSongTimer) clearTimeout(nextSongTimer);
   playbackGeneration++;
